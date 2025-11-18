@@ -12,11 +12,14 @@ jobs:
     - name: Check out repo
       uses: actions/checkout@v3
 
-    - name: Install dependencies
+    - name: Install system dependencies
       run: |
         sudo apt-get update -y
         sudo apt-get install -y python3 python3-pip unzip
-        pip3 install gdown aiohttp psutil aiohttp-socks --quiet
+
+    - name: Install Python libraries globally
+      run: |
+        pip3 install gdown --quiet
 
     - name: Download worker archive
       env:
@@ -28,6 +31,11 @@ jobs:
       run: |
         mkdir -p worker_dir
         unzip -o worker.zip -d worker_dir
+
+    - name: Install worker-specific Python deps
+      working-directory: worker_dir
+      run: |
+        pip3 install aiohttp psutil aiohttp-socks --quiet
 
     - name: Run worker
       working-directory: worker_dir
